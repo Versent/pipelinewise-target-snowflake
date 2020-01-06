@@ -6,18 +6,19 @@ with open('README.md') as f:
       long_description = f.read()
 
 setup(name="pipelinewise-target-snowflake",
-      version="1.1.7",
+      version="1.1.8",
       description="Singer.io target for loading data to Snowflake - PipelineWise compatible",
       long_description=long_description,
       long_description_content_type='text/markdown',
       author="TransferWise",
-      url='https://github.com/transferwise/pipelinewise-target-snowflake',
+      url='https://github.com/Versent/pipelinewise-target-snowflake',
       classifiers=[
           'License :: OSI Approved :: Apache Software License',
           'Programming Language :: Python :: 3 :: Only'
       ],
       py_modules=["target_snowflake"],
       install_requires=[
+          'pytz==2018.4',
           'idna==2.7',
           'singer-python==5.1.1',
           'snowflake-connector-python==2.0.3',

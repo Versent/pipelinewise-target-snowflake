@@ -77,7 +77,7 @@ def emit_state(state):
         logger.info('Emitting state {}'.format(line))
         sys.stdout.write("{}\n".format(line))
         sys.stdout.flush()
-
+   
 
 def get_schema_names_from_config(config):
     default_target_schema = config.get('default_target_schema')
@@ -227,6 +227,12 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
                 raise Exception("Line is missing required key 'stream': {}".format(line))
 
             stream = o['stream']
+
+            # Before loading, delete anything that needs to be deleted
+            db = DbSync(config, o, information_schema_cache)
+            full_load = config.get("truncated_full_load", False)
+            if full_load:
+                db.truncate(stream)
 
             schemas[stream] = float_to_decimal(o['schema'])
             validators[stream] = Draft4Validator(schemas[stream], format_checker=FormatChecker())
@@ -427,6 +433,7 @@ def main():
 
     # Consume singer messages
     singer_messages = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+
     persist_lines(config, singer_messages, information_schema_cache)
 
     logger.debug("Exiting normally")
