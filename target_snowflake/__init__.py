@@ -23,7 +23,8 @@ logger = singer.get_logger()
 
 DEFAULT_BATCH_SIZE_ROWS = 100000
 DEFAULT_PARALLELISM = 0  # 0 The number of threads used to flush tables
-DEFAULT_MAX_PARALLELISM = 16  # Don't use more than this number of threads by default when flushing streams in parallel
+# Don't use more than this number of threads by default when flushing streams in parallel
+DEFAULT_MAX_PARALLELISM = 16
 
 # max timestamp/datetime supported in SF, used to reset all invalid dates that are beyond this value
 MAX_TIMESTAMP = '9999-12-31 23:59:59.999999'
@@ -54,7 +55,8 @@ def add_metadata_columns_to_schema(schema_message):
                                                                             'format': 'date-time'}
     extended_schema_message['schema']['properties']['_sdc_batched_at'] = {'type': ['null', 'string'],
                                                                           'format': 'date-time'}
-    extended_schema_message['schema']['properties']['_sdc_deleted_at'] = {'type': ['null', 'string']}
+    extended_schema_message['schema']['properties']['_sdc_deleted_at'] = {
+        'type': ['null', 'string']}
 
     return extended_schema_message
 
@@ -66,7 +68,8 @@ def add_metadata_values_to_record(record_message, stream_to_sync):
     extended_record = record_message['record']
     extended_record['_sdc_extracted_at'] = record_message.get('time_extracted')
     extended_record['_sdc_batched_at'] = datetime.now().isoformat()
-    extended_record['_sdc_deleted_at'] = record_message.get('record', {}).get('_sdc_deleted_at')
+    extended_record['_sdc_deleted_at'] = record_message.get(
+        'record', {}).get('_sdc_deleted_at')
 
     return extended_record
 
@@ -77,7 +80,7 @@ def emit_state(state):
         logger.info('Emitting state {}'.format(line))
         sys.stdout.write("{}\n".format(line))
         sys.stdout.flush()
-   
+
 
 def get_schema_names_from_config(config):
     default_target_schema = config.get('default_target_schema')
@@ -97,7 +100,8 @@ def get_schema_names_from_config(config):
 def load_information_schema_cache(config):
     information_schema_cache = []
     if not ('disable_table_cache' in config and config['disable_table_cache'] == True):
-        logger.info("Getting catalog objects from information_schema cache table...")
+        logger.info(
+            "Getting catalog objects from information_schema cache table...")
 
         db = DbSync(config)
         information_schema_cache = db.get_table_columns(
@@ -132,9 +136,12 @@ def adjust_timestamps_in_record(record: Dict, schema: Dict) -> None:
             else:
                 if 'string' in schema['properties'][key]['type'] and \
                         schema['properties'][key].get('format', None) in {'date-time', 'time', 'date'}:
-                    reset_new_value(record, key, schema['properties'][key]['format'])
+                    reset_new_value(
+                        record, key, schema['properties'][key]['format'])
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+
+
 def persist_lines(config, lines, information_schema_cache=None) -> None:
     state = None
     flushed_state = None
@@ -146,6 +153,7 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
     row_count = {}
     stream_to_sync = {}
     total_row_count = {}
+    truncated_schemas = {}
     batch_size_rows = config.get('batch_size_rows', DEFAULT_BATCH_SIZE_ROWS)
 
     # Loop over lines from stdin
@@ -157,13 +165,15 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
             raise
 
         if 'type' not in o:
-            raise Exception("Line is missing required key 'type': {}".format(line))
+            raise Exception(
+                "Line is missing required key 'type': {}".format(line))
 
         t = o['type']
 
         if t == 'RECORD':
             if 'stream' not in o:
-                raise Exception("Line is missing required key 'stream': {}".format(line))
+                raise Exception(
+                    "Line is missing required key 'stream': {}".format(line))
             if o['stream'] not in schemas:
                 raise Exception(
                     "A record for stream {} was encountered before a corresponding schema".format(o['stream']))
@@ -184,7 +194,8 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
                         "Try removing 'multipleOf' methods from JSON schema.".format(o['record']))
                     raise ex
 
-            primary_key_string = stream_to_sync[stream].record_primary_key_string(o['record'])
+            primary_key_string = stream_to_sync[stream].record_primary_key_string(
+                o['record'])
             if not primary_key_string:
                 primary_key_string = 'RID-{}'.format(total_row_count[stream])
 
@@ -198,7 +209,8 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
 
             # append record
             if config.get('add_metadata_columns') or config.get('hard_delete'):
-                records_to_load[stream][primary_key_string] = add_metadata_values_to_record(o, stream_to_sync[stream])
+                records_to_load[stream][primary_key_string] = add_metadata_values_to_record(
+                    o, stream_to_sync[stream])
             else:
                 records_to_load[stream][primary_key_string] = o['record']
 
@@ -224,24 +236,30 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
 
         elif t == 'SCHEMA':
             if 'stream' not in o:
-                raise Exception("Line is missing required key 'stream': {}".format(line))
+                raise Exception(
+                    "Line is missing required key 'stream': {}".format(line))
 
             stream = o['stream']
 
-            # Before loading, delete anything that needs to be deleted
+            # Before loading, delete anything that needs to be deleted - but
+            # only ever truncate once
             db = DbSync(config, o, information_schema_cache)
             full_load = config.get("truncated_full_load", False)
             if full_load:
-                db.truncate(stream)
+                if truncated_schemas.get(stream, False) == False:
+                    db.truncate(stream)
+                    truncated_schemas[stream] = True
 
             schemas[stream] = float_to_decimal(o['schema'])
-            validators[stream] = Draft4Validator(schemas[stream], format_checker=FormatChecker())
+            validators[stream] = Draft4Validator(
+                schemas[stream], format_checker=FormatChecker())
 
             # flush records from previous stream SCHEMA
             # if same stream has been encountered again, it means the schema might have been altered
             # so previous records need to be flushed
             if row_count.get(stream, 0) > 0:
-                flushed_state = flush_streams(records_to_load, row_count, stream_to_sync, config, state, flushed_state)
+                flushed_state = flush_streams(
+                    records_to_load, row_count, stream_to_sync, config, state, flushed_state)
 
                 # emit latest encountered state
                 emit_state(flushed_state)
@@ -259,15 +277,18 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
             #  or
             #  2) Use fastsync [postgres-to-snowflake, mysql-to-snowflake, etc.]
             if config.get('primary_key_required', True) and len(o['key_properties']) == 0:
-                logger.critical("Primary key is set to mandatory but not defined in the [{}] stream".format(stream))
+                logger.critical(
+                    "Primary key is set to mandatory but not defined in the [{}] stream".format(stream))
                 raise Exception("key_properties field is required")
 
             key_properties[stream] = o['key_properties']
 
             if config.get('add_metadata_columns') or config.get('hard_delete'):
-                stream_to_sync[stream] = DbSync(config, add_metadata_columns_to_schema(o), information_schema_cache)
+                stream_to_sync[stream] = DbSync(
+                    config, add_metadata_columns_to_schema(o), information_schema_cache)
             else:
-                stream_to_sync[stream] = DbSync(config, o, information_schema_cache)
+                stream_to_sync[stream] = DbSync(
+                    config, o, information_schema_cache)
 
             try:
                 stream_to_sync[stream].create_schema_if_not_exists()
@@ -304,7 +325,8 @@ def persist_lines(config, lines, information_schema_cache=None) -> None:
     # then flush all buckets.
     if sum(row_count.values()) > 0:
         # flush all streams one last time, delete records if needed, reset counts and then emit current state
-        flushed_state = flush_streams(records_to_load, row_count, stream_to_sync, config, state, flushed_state)
+        flushed_state = flush_streams(
+            records_to_load, row_count, stream_to_sync, config, state, flushed_state)
 
     # emit latest state
     emit_state(copy.deepcopy(flushed_state))
@@ -373,7 +395,8 @@ def flush_streams(
                 if 'bookmarks' not in flushed_state:
                     flushed_state['bookmarks'] = {}
                 # Copy the stream bookmark from the latest state
-                flushed_state['bookmarks'][stream] = copy.deepcopy(state['bookmarks'][stream])
+                flushed_state['bookmarks'][stream] = copy.deepcopy(
+                    state['bookmarks'][stream])
 
         # If we flush every bucket use the latest state
         else:
@@ -436,7 +459,7 @@ def main():
 
     persist_lines(config, singer_messages, information_schema_cache)
 
-    logger.debug("Exiting normally")
+    logger.info("Exiting normally")
 
 
 if __name__ == '__main__':
